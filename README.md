@@ -3,7 +3,7 @@
 Beancount plugins that check option contracts written in a Beancount ledger:
 
 - `check_option_expiry`: reports a contract that still has open units after it expires.
-- `check_option_assignment`: checks an assigned short option (shares per contract, no gain on the option leg, and the stock's basis or proceeds of strike ∓ premium).
+- `check_option_assignment` (planned, not yet in the package): checks an assigned short option (shares per contract, no gain on the option leg, and the stock's basis or proceeds of strike ∓ premium).
 
 The plugins only check and report. They never generate entries.
 
@@ -11,10 +11,9 @@ These are the Python counterparts of native plugins in [rustledger](https://gith
 
 ```beancount
 plugin "beancount_options.check_option_expiry"
-plugin "beancount_options.check_option_assignment"
 ```
 
-rustledger's CI runs both implementations on the same ledgers and requires identical results.
+Add the `check_option_assignment` line once that plugin ships. rustledger's CI runs both implementations on the same ledgers and requires identical results.
 
 ## Install
 
