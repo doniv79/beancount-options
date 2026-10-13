@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels that PR's previous run; pushes to main
+# and manual runs are keyed by run id and never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Pinned so a new ruff release can't change formatting under an unchanged PR.
+  RUFF_VERSION: "0.17.0"
+
+jobs:
+  # main starts with only README and LICENSE; the other jobs skip until the
+  # package exists on the branch being tested.
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      package: ${{ steps.check.outputs.package }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: check
+        run: |
+          if [ -f pyproject.toml ]; then echo "package=true" >> "$GITHUB_OUTPUT"; else echo "package=false" >> "$GITHUB_OUTPUT"; fi
+
+  lint:
+    needs: detect
+    if: needs.detect.outputs.package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      # ruff runs standalone: linting doesn't need beancount installed.
+      - run: uvx "ruff@${RUFF_VERSION}" check .
+      - run: uvx "ruff@${RUFF_VERSION}" format --check .
+
+  test:
+    needs: detect
+    if: needs.detect.outputs.package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        # The oldest supported beancount and the newest 3.x.
+        beancount: ["3.0.0", "latest"]
+        exclude:
+          # beancount 3.0.0 ships no wheels for these, so they'd build it
+          # from source; 3.0.0 is covered on 3.9-3.12.
+          - python: "3.13"
+            beancount: "3.0.0"
+          - python: "3.14"
+            beancount: "3.0.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+      - name: pytest against beancount ${{ matrix.beancount }}
+        env:
+          BEANCOUNT: ${{ matrix.beancount }}
+          PYTHON: ${{ matrix.python }}
+        run: |
+          if [ "$BEANCOUNT" = latest ]; then spec="beancount>=3,<4"; else spec="beancount==$BEANCOUNT"; fi
+          uv run --isolated --python "$PYTHON" --with "$spec" --with pytest --with-editable . pytest -q
+      # End to end, the way a user enables it: the documented plugin line under
+      # bean-check must load the package and report an expired contract.
+      - name: bean-check with the plugin line
+        env:
+          BEANCOUNT: ${{ matrix.beancount }}
+          PYTHON: ${{ matrix.python }}
+        run: |
+          if [ "$BEANCOUNT" = latest ]; then spec="beancount>=3,<4"; else spec="beancount==$BEANCOUNT"; fi
+          cat > "$RUNNER_TEMP/expired.beancount" <<'LEDGER'
+          plugin "beancount_options.check_option_expiry"
+
+          2026-09-01 open Assets:Broker:Options
+          2026-09-01 open Assets:Broker:Cash USD
+          2026-09-01 open Income:Interest USD
+
+          2026-09-02 * "Sell to open 1 AAPL 16OCT26 230 P"
+            Assets:Broker:Options  -1 AAPL261016P00230000 @ 250.00 USD
+            Assets:Broker:Cash      250.00 USD
+
+          2026-10-20 * "Interest"
+            Assets:Broker:Cash        1.00 USD
+            Income:Interest          -1.00 USD
+          LEDGER
+          set +e
+          out=$(uv run --isolated --python "$PYTHON" --with "$spec" --with-editable . bean-check "$RUNNER_TEMP/expired.beancount" 2>&1)
+          status=$?
+          set -e
+          echo "$out"
+          [ "$status" -ne 0 ] || { echo "bean-check should have failed"; exit 1; }
+          echo "$out" | grep -q "AAPL261016P00230000 expired 2026-10-16" || { echo "expiry error not reported"; exit 1; }
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv build
+      # The wheel must carry the SPDX license expression and the license file.
+      - name: Check the wheel's metadata
+        run: |
+          uvx twine check --strict dist/*
+          python3 - <<'PY'
+          import glob, zipfile
+          whl = glob.glob("dist/*.whl")[0]
+          z = zipfile.ZipFile(whl)
+          meta = z.read(next(n for n in z.namelist() if n.endswith("METADATA"))).decode()
+          assert "License-Expression: GPL-2.0-or-later" in meta, meta
+          assert any(n.endswith("licenses/LICENSE") for n in z.namelist()), z.namelist()
+          print("ok:", whl)
+          PY
