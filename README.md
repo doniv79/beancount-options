@@ -15,7 +15,52 @@ plugin "beancount_options.check_option_expiry"
 
 Add the `check_option_assignment` line once that plugin ships. rustledger's CI runs both implementations on the same ledgers and requires identical results.
 
-Status: being designed in [rustledger#2555](https://github.com/rustledger/rustledger/issues/2555).
+## Install
+
+```sh
+pip install git+https://github.com/rustledger/beancount-options
+```
+
+Requires Python 3.9+ and beancount 3.
+
+## check_option_expiry
+
+A posting is an option when its commodity is an OCC symbol with the spaces removed: a root of 1–6 letters, digits or dots starting with a letter (adjusted roots such as `XYZ1` are checked too), the expiry as `YYMMDD`, `C` or `P`, and the strike × 1000 as 8 digits. `AAPL261016P00230000` is the AAPL 2026-10-16 230 put. Other commodities are ignored.
+
+The plugin tracks each contract's net units per account, netting each transaction's legs first. It reports a contract that still has units open when the ledger has an entry of any kind dated after its expiry, at the transaction that opened the current position (the last one that moved it off zero or across it). "Today" is the ledger's last entry date, not the clock, so every run gives the same answer. A close dated on the expiry day is fine.
+
+```beancount
+plugin "beancount_options.check_option_expiry"
+
+2026-09-01 open Assets:Broker:Options
+2026-09-01 open Assets:Broker:Cash
+2026-09-01 open Income:Interest
+
+2026-09-02 * "Sell to open"
+  Assets:Broker:Options  -1 AAPL261016P00230000 {250.00 USD}
+  Assets:Broker:Cash      250.00 USD
+
+2026-10-20 * "Interest"
+  Assets:Broker:Cash        1.00 USD
+  Income:Interest          -1.00 USD
+```
+
+`bean-check` reports, at the sell-to-open line:
+
+```
+ledger.beancount:7: AAPL261016P00230000 expired 2026-10-16 but -1 contract(s) remain open in Assets:Broker:Options
+```
+
+`check_option_assignment` is coming in a later release.
+
+## Development
+
+```sh
+uv run ruff check . && uv run ruff format --check .
+uv run pytest
+```
+
+Status: `check_option_expiry` is available; `check_option_assignment` is next. Design: [rustledger#2555](https://github.com/rustledger/rustledger/issues/2555).
 
 ## License
 
