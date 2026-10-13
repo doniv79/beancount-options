@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 import datetime
 from decimal import Decimal
 
@@ -52,3 +53,13 @@ def test_rejects_non_occ(symbol):
 )
 def test_plain(number, text):
     assert plain(Decimal(number)) == text
+
+
+def test_leap_day_dates():
+    assert parse_occ("AAPL280229C00100000").expiry == datetime.date(2028, 2, 29)
+    assert parse_occ("AAPL270229C00100000") is None
+
+
+def test_rejects_non_ascii_digits():
+    # Arabic-Indic digits: \d would match them and int() would accept them.
+    assert parse_occ("AAPL\u0662\u0666\u0661\u0660\u0661\u0666P00230000") is None

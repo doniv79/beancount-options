@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Shared helpers: load a ledger through beancount with a plugin enabled."""
 
 import textwrap
@@ -9,6 +10,7 @@ HEADER = """\
 2026-01-01 open Assets:Broker:Cash
 2026-01-01 open Assets:IRA:Options
 2026-01-01 open Expenses:Fees
+2026-01-01 open Income:Options
 """
 
 
@@ -40,4 +42,25 @@ def later(date):
 {date} * "unrelated"
   Assets:Broker:Cash  -1.00 USD
   Expenses:Fees  1.00 USD
+"""
+
+
+def leg_at_cost(date, units, symbol, cost="300.00", account="Assets:Broker:Options"):
+    """One option leg at cost, the rustledger#2555 convention.
+
+    Opens with ``{cost USD}``; a close (``cost=None``) uses ``{}`` and books
+    the difference to Income:Options.
+    """
+    if cost is None:
+        return f"""
+{date} * "close at cost"
+  {account}  {units} {symbol} {{}} @ 100 USD
+  Assets:Broker:Cash  {-int(units) * 100} USD
+  Income:Options
+"""
+    total = -int(units) * float(cost)
+    return f"""
+{date} * "open at cost"
+  {account}  {units} {symbol} {{{cost} USD}}
+  Assets:Broker:Cash  {total:.2f} USD
 """

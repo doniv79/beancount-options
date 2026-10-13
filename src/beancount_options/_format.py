@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Number formatting that matches rustledger's messages byte for byte."""
 
 from decimal import Decimal

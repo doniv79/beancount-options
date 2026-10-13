@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """OCC option symbols.
 
 Option contracts are recognized by their OCC symbol with spaces removed: a
@@ -14,7 +15,9 @@ import re
 from decimal import Decimal
 from typing import NamedTuple, Optional
 
-_OCC_RE = re.compile(r"([A-Z][A-Z0-9.]{0,5})(\d{2})(\d{2})(\d{2})([CP])(\d{8})")
+# [0-9], not \d: \d also matches non-ASCII digits, which int() accepts and
+# rustledger's parse rejects.
+_OCC_RE = re.compile(r"([A-Z][A-Z0-9.]{0,5})([0-9]{2})([0-9]{2})([0-9]{2})([CP])([0-9]{8})")
 
 
 class OccSymbol(NamedTuple):
@@ -37,6 +40,7 @@ def parse_occ(symbol: str) -> Optional[OccSymbol]:
         return None
     root, yy, mm, dd, right, strike = match.groups()
     try:
+        # OCC years are two digits; 20xx is deliberate and matches rustledger.
         expiry = datetime.date(2000 + int(yy), int(mm), int(dd))
     except ValueError:
         return None

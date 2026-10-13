@@ -1,9 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Error on option contracts still open after their expiry date.
 
 Option contracts are recognized by their OCC symbol (see ``_occ``). Every
 other commodity is ignored.
 
-"Today" is the date of the last entry in the ledger, not the system clock,
+"Today" is the date of the last entry of any kind in the ledger, not the system clock,
 so the result is the same on every run. A contract is reported when its net
 units in an account are non-zero and the ledger contains an entry dated
 after its expiry. A close dated on the expiry day itself is fine.
@@ -34,8 +35,30 @@ class _Position:
     def __init__(self, expiry, opened_by):
         self.expiry = expiry
         self.net = Decimal(0)
-        # The entry that last opened the position from flat.
+        # The entry that opened the current position: the last one that
+        # moved it away from flat or across zero.
         self.opened_by = opened_by
+
+
+def _entry_deltas(entry):
+    """Net option units per (account, symbol) in one transaction.
+
+    Netting first makes the result independent of posting order, and makes
+    an entry whose legs cancel a no-op.
+    """
+    deltas = {}
+    expiries = {}
+    for posting in entry.postings:
+        units = posting.units
+        if units is None or not isinstance(units.number, Decimal):
+            continue
+        occ = parse_occ(units.currency)
+        if occ is None:
+            continue
+        key = (posting.account, units.currency)
+        deltas[key] = deltas.get(key, Decimal(0)) + units.number
+        expiries[key] = occ.expiry
+    return [(key, delta, expiries[key]) for key, delta in deltas.items()]
 
 
 def check_option_expiry(entries, options_map, config=None):
@@ -55,20 +78,14 @@ def check_option_expiry(entries, options_map, config=None):
     for entry in sorted(entries, key=lambda e: e.date):
         if not isinstance(entry, data.Transaction):
             continue
-        for posting in entry.postings:
-            units = posting.units
-            if units is None or not isinstance(units.number, Decimal):
-                continue
-            occ = parse_occ(units.currency)
-            if occ is None:
-                continue
-            key = (posting.account, units.currency)
+        for key, delta, expiry in _entry_deltas(entry):
             pos = positions.get(key)
             if pos is None:
-                pos = positions[key] = _Position(occ.expiry, entry)
-            if pos.net == 0:
+                pos = positions[key] = _Position(expiry, entry)
+            new_net = pos.net + delta
+            if pos.net == 0 or (pos.net < 0 < new_net) or (new_net < 0 < pos.net):
                 pos.opened_by = entry
-            pos.net += units.number
+            pos.net = new_net
 
     errors = []
     if entries:
