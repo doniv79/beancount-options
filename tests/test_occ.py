@@ -31,6 +31,9 @@ def test_parses_put_and_call():
         "AAPL261016X00230000",  # not C/P
         "AAPL261016P0023000",  # 7 strike digits
         "TOOLONGX261016P00230000",  # root > 6
+        "ABCDEFG261016P00230000",  # root of 7, one past the limit
+        "1ABC261016P00230000",  # root starts with a digit
+        ".ABC261016P00230000",  # root starts with a dot
         "aapl261016P00230000",  # lowercase root
         "AAPL261016P002300000",  # trailing digit
     ],
